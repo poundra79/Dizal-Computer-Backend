@@ -1,0 +1,96 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+    # This is only for development. Remove in production
+    develop:
+      watch:
+        - path: ./prisma
+          action: "rebuild"
+        - path: ./src
+          action: sync+restart
+          target: /app/src
+        - path: ./test
+          action: sync
+          target: /app/test
+        - path: ./eslint.config.mjs
+          action: rebuild
+        - path: ./nest-cli.json
+          action: rebuild
+        - path: ./package*.json
+          action: rebuild
+        - path: ./prisma.config.ts
+          action: rebuild
+        - path: ./tsconfig*.json
+          action: rebuild
+        - path: ./.env
+          action: sync+restart
+          target: /app/docker.env
+
+    env_file:
+      - ./.env
+    environment:
+      NODE_ENV: development
+      PORT: 3000 # Keep 3000 in container
+      DATABASE_HOST: postgresql
+      DATABASE_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: minio
+    networks:
+      - default
+    ports:
+      - "${PORT}:3000" # Expose dynamically based on .env
+      
+  postgresql:
+    build:
+      context: .docker/postgresql
+    environment:
+      POSTGRES_DB: "${DATABASE_NAME}"
+      POSTGRES_USER: "${DATABASE_USERNAME}"
+      POSTGRES_PASSWORD: "${DATABASE_PASSWORD}"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME} -d pkphub_dev -h localhost -p 5432"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    ports:
+      - "5432:5432"
+    networks:
+      - default
+    volumes:
+      - ./.docker/postgresql/data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY} 
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - default
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./.docker/minio/data:/data
+
+networks:
+  default:
+    driver: bridge
